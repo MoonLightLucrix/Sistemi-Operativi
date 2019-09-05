@@ -1,5 +1,3 @@
-//Soluzione Parziale!!
-
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -37,8 +35,6 @@ int list(int msqid,char*directory)
 {
 	Messaggio messaggio;
 	struct stat statBuff;
-	printf("ciao1\n");
-	chdir(directory);
 	DIR*folder=opendir(".");
 	struct dirent*info;
 	if(folder)
@@ -49,17 +45,24 @@ int list(int msqid,char*directory)
 			{
 				if((lstat(info->d_name,&statBuff))==-1)
 				{
-					fprintf(stderr,"%s: lstat\n",program);
-					return -1;
+                    messaggio.type=PARENTID;
+                    messaggio.payload=REPLY_ERR;
+                    sprintf(messaggio.txt,"%s: list: lstat: %d",program,errno);
+                    if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+                    {
+                        perror("error: msgsnd");
+                        exit(EXIT_FAILURE);
+                    }
+                    return -1;
 				}
 				if((statBuff.st_mode & S_IFMT)==S_IFREG)
 				{
 					messaggio.type=PARENTID;
 					messaggio.payload=REPLY_DATA;
 					strcpy(messaggio.txt,info->d_name);
-					if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+					if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 					{
-						fprintf(stderr,"%s: msgsnd\n",program);
+                        perror("error: msgsnd");
 						return -1;
 					}
 				}
@@ -67,10 +70,10 @@ int list(int msqid,char*directory)
 		}
 		messaggio.type=PARENTID;
 		messaggio.payload=REPLY_DATA_STOP;
-		if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+		if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 		{
-			fprintf(stderr,"%s: msgsnd\n",program);
-			return -1;
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
 		}
 		closedir(folder);
 	}
@@ -81,43 +84,50 @@ int size(int msqid,char*directory,char*file)
 {
 	Messaggio messaggio;
 	struct stat statBuff;
-	DIR*folder=opendir(".");
-	struct dirent*info;
-	if(folder)
-	{
-		while((info=readdir(folder)))
-		{
-			if((strcmp(info->d_name,".")) && (strcmp(info->d_name,"..")))
-			{
-				if(!strcmp(file,info->d_name))
-				{
-					if((lstat(info->d_name,&statBuff))==-1)
-					{
-						fprintf(stderr,"%s: lstat\n",program);
-						return -1;
-					}
-					messaggio.type=PARENTID;
-					messaggio.payload=REPLY_DATA;
-					messaggio.size=statBuff.st_size;
-					if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
-					{
-						fprintf(stderr,"%s: msgsnd\n",program);
-						return -1;
-					}
-					closedir(folder);
-					return 0;
-				}
-			}
-		}
-		messaggio.type=PARENTID;
-		messaggio.payload=REPLY_ERR;
-		if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
-		{
-			fprintf(stderr,"%s: msgsnd\n",program);
-			return -1;
-		}
-		closedir(folder);
-	}
+    if((access(file,F_OK))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: size: \"%s\" No such file or directory",program,file);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((access(file,R_OK))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: size: Permission denied",program);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((lstat(file,&statBuff))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: size: lstat: %d",program,errno);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    messaggio.type=PARENTID;
+    messaggio.payload=REPLY_DATA;
+    messaggio.size=statBuff.st_size;
+    if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+    {
+        perror("error: msgsnd");
+        exit(EXIT_FAILURE);
+    }
 	return 0;
 }
 
@@ -136,55 +146,78 @@ int search(int msqid,char*directory,char*file,char*needle)
 {
 	Messaggio messaggio;
 	struct stat statBuff;
-	DIR*folder=opendir(".");
-	struct dirent*info;
-	if(folder)
-	{
-		while((info=readdir(folder)))
-		{
-			if((strcmp(info->d_name,".")) && (strcmp(info->d_name,"..")))
-			{
-				if(!strcmp(file,info->d_name))
-				{
-					int fd;
-					if((fd=open(info->d_name,O_RDONLY))==-1)
-					{
-						return -1;
-					}
-					if((lstat(info->d_name,&statBuff))==-1)
-					{
-						fprintf(stderr,"%s: lstat\n",program);
-						return -1;
-					}
-					char*haystack;
-					if((haystack=(char*)mmap(NULL,statBuff.st_size,PROT_READ,MAP_SHARED,fd,0))==MAP_FAILED)
-					{
-						return -1;
-					}
-					messaggio.type=PARENTID;
-					messaggio.payload=REPLY_DATA;
-					messaggio.n=occurences(haystack,needle);
-					if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
-					{
-						fprintf(stderr,"%s: msgsnd\n",program);
-						return -1;
-					}
-					munmap(haystack,statBuff.st_size);
-					close(fd);
-					closedir(folder);
-					return 0;
-				}
-			}
-		}
-		messaggio.type=PARENTID;
-		messaggio.payload=REPLY_ERR;
-		if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
-		{
-			fprintf(stderr,"%s: msgsnd\n",program);
-			return -1;
-		}
-		closedir(folder);
-	}
+    int fd;
+    char*haystack;
+    if((access(file,F_OK))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: search: \"%s\" No such file or directory",program,file);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((access(file,R_OK))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: search: Permission denied",program);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((fd=open(file,O_RDONLY))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: search: Can't read file",program);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((lstat(file,&statBuff))==-1)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: search: lstat",program);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    if((haystack=(char*)mmap(NULL,statBuff.st_size,PROT_READ,MAP_SHARED,fd,0))==MAP_FAILED)
+    {
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"%s: search: mmap",program);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
+    }
+    messaggio.type=PARENTID;
+    messaggio.payload=REPLY_DATA;
+    messaggio.n=occurences(haystack,needle);
+    if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+    {
+        perror("error: msgsnd");
+        exit(EXIT_FAILURE);
+    }
+    munmap(haystack,statBuff.st_size);
+    close(fd);
 	return 0;
 }
 
@@ -193,16 +226,37 @@ int childhood(int msqid,char*directory,int n)
 	Messaggio messaggio;
 	if((access(directory,F_OK))==-1)
 	{
-		fprintf(stderr,"%s: \"%s\" No such file or directory\n",program,directory);
-		return -1;
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"Figlio n. %d directory: \"%s\" No such file or directory",n,directory);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
 	}
 	if((access(directory,R_OK))==-1)
 	{
-		fprintf(stderr,"%s: Permission denied\n",program);
-		return -1;
+        messaggio.type=PARENTID;
+        messaggio.payload=REPLY_ERR;
+        sprintf(messaggio.txt,"Figlio n. %d directory: \"%s\" Permission denied",n,directory);
+        if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+        {
+            perror("error: msgsnd");
+            exit(EXIT_FAILURE);
+        }
+        return -1;
 	}
 	chdir(directory);
-	printf("Figlio n. %d directory: %s PRONTO!\n",n,directory);
+    messaggio.type=PARENTID;
+    messaggio.payload=REPLY_DATA;
+    sprintf(messaggio.txt,"Figlio n. %d directory: \"%s\" PRONTO!",n,directory);
+    if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+    {
+        perror("error: msgsnd");
+        exit(EXIT_FAILURE);
+    }
 	while(true)
 	{
 		if((msgrcv(msqid,&messaggio,sizeof(messaggio)-sizeof(long),n,0))==-1)
@@ -210,24 +264,17 @@ int childhood(int msqid,char*directory,int n)
 			fprintf(stderr,"%s: msgrcv\n",program);
 			return -1;
 		}
-		printf("ciao2\n");
 		if(messaggio.payload==CMD_EXIT)
 		{
 			break;
 		}
 		else if(messaggio.payload==CMD_LIST)
 		{
-			if((list(msqid,directory))==-1)
-			{
-				return -1;
-			}
+            list(msqid,directory);
 		}
 		else if(messaggio.payload==CMD_SIZE)
 		{
-			if((size(msqid,directory,messaggio.txt))==-1)
-			{
-				return -1;
-			}
+            size(msqid,directory,messaggio.txt);
 		}
 		else if(messaggio.payload==CMD_SEARCH)
 		{
@@ -238,11 +285,7 @@ int childhood(int msqid,char*directory,int n)
 				free(fileName);
 				return -1;
 			}
-			if((search(msqid,directory,fileName,messaggio.txt))==-1)
-			{
-				free(fileName);
-				return -1;
-			}
+            search(msqid,directory,fileName,messaggio.txt);
 			if(fileName)
 			{
 				free(fileName);
@@ -255,7 +298,7 @@ int childhood(int msqid,char*directory,int n)
 //---------------------------------------------------------------------------------------------------------------------------------------------------------
 //Parent process
 
-int comando(int msqid)
+int comando(int msqid,bool*isAlive,int nDir)
 {
 	Messaggio messaggio;
 	char*comando=(char*)malloc(N);
@@ -301,29 +344,39 @@ int comando(int msqid)
 			if(i==2)
 			{
 				int n=atoi(arguments[1]);
+                if(((n<=0) || (n>=nDir)) || (!isAlive[n]))
+                {
+                    printf("%s: syntax error\n",program);
+                    continue;
+                }
 				messaggio.type=n;
 				messaggio.payload=CMD_LIST;
-				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 				{
 					fprintf(stderr,"%s: msgsnd\n",program);
 					return -1;
 				}
-				printf("Messaggio: \"\n");
 				while(true)
 				{
-					printf("ciao3\n");
 					if((msgrcv(msqid,&messaggio,sizeof(messaggio)-sizeof(long),PARENTID,0))==-1)
 					{
 						fprintf(stderr,"%s: msgrcv\n",program);
 						return -1;
 					}
+                    if(messaggio.payload==REPLY_ERR)
+                    {
+                        printf("%s",messaggio.txt);
+                        break;
+                    }
 					if(messaggio.payload==REPLY_DATA_STOP)
 					{
 						break;
 					}
-					printf("\t%s\n",messaggio.txt);
+                    if(messaggio.payload==REPLY_DATA)
+                    {
+                        printf("\t%s\n",messaggio.txt);
+                    }
 				}
-				printf("\"\n");
 			}
 			else
 			{
@@ -335,10 +388,15 @@ int comando(int msqid)
 			if(i==3)
 			{
 				int n=atoi(arguments[1]);
+                if(((n<=0) || (n>=nDir)) || (!isAlive[n]))
+                {
+                    printf("%s: syntax error\n",program);
+                    continue;
+                }
 				messaggio.type=n;
 				messaggio.payload=CMD_SIZE;
 				strcpy(messaggio.txt,arguments[2]);
-				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 				{
 					fprintf(stderr,"%s: msgsnd\n",program);
 					return -1;
@@ -348,7 +406,14 @@ int comando(int msqid)
 					fprintf(stderr,"%s: msgrcv\n",program);
 					return -1;
 				}
-				printf("Messaggio: il file e' grande %ld B\n",messaggio.size);
+                if(messaggio.payload==REPLY_ERR)
+                {
+                    printf("%s\n",messaggio.txt);
+                }
+                else
+                {
+                    printf("Il file e' grande %lldB\n",messaggio.size);
+                }
 			}
 			else
 			{
@@ -360,10 +425,15 @@ int comando(int msqid)
 			if(i==4)
 			{
 				int n=atoi(arguments[1]);
+                if(((n<=0) || (n>=nDir)) || (!isAlive[n]))
+                {
+                    printf("%s: syntax error\n",program);
+                    continue;
+                }
 				messaggio.type=n;
 				messaggio.payload=CMD_SEARCH;
 				strcpy(messaggio.txt,arguments[2]);
-				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 				{
 					fprintf(stderr,"%s: msgsnd\n",program);
 					return -1;
@@ -371,9 +441,9 @@ int comando(int msqid)
 				messaggio.type=n;
 				messaggio.payload=CMD_SEARCH;
 				strcpy(messaggio.txt,arguments[3]);
-				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
+				if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
 				{
-					fprintf(stderr,"%s: msgsnd\n",program);
+                    perror("error: msgsnd");
 					return -1;
 				}
 				if((msgrcv(msqid,&messaggio,sizeof(messaggio)-sizeof(long),PARENTID,0))==-1)
@@ -381,7 +451,21 @@ int comando(int msqid)
 					fprintf(stderr,"%s: msgrcv\n",program);
 					return -1;
 				}
-				printf("Messaggio: %ld\n",messaggio.n);
+                if(messaggio.payload==REPLY_ERR)
+                {
+                    printf("%s\n",messaggio.txt);
+                }
+                else
+                {
+                    if(messaggio.n==1)
+                    {
+                        printf("La parola \"%s\" e' presente %ld volta\n",arguments[3],messaggio.n);
+                    }
+                    else
+                    {
+                        printf("La parola \"%s\" e' presente %ld volte\n",arguments[3],messaggio.n);
+                    }
+                }
 			}
 			else
 			{
@@ -396,7 +480,6 @@ int comando(int msqid)
 		}
 		sleep(1);
 	}
-	printf("ciao quit\n");
 	if(comando)
 	{
 		free(comando);
@@ -414,8 +497,12 @@ int fileShell(int nDir,char**dir)
 		fprintf(stderr,"%s: msgget\n",program);
 		return -1;
 	}
+    Messaggio messaggio;
 	int i;
 	pid_t pid;
+    bool*isAlive=(bool*)malloc((nDir-1)*sizeof(bool));
+    isAlive[0]=false;
+    int c=0;
 	for(i=1; i<=nDir-1; i++)
 	{
 		if((pid=fork())==-1)
@@ -431,29 +518,51 @@ int fileShell(int nDir,char**dir)
 			}
 			exit(EXIT_SUCCESS);
 		}
+        if((msgrcv(msqid,&messaggio,sizeof(messaggio)-sizeof(long),PARENTID,0))==-1)
+        {
+            fprintf(stderr,"%s: msgrcv\n",program);
+            return -1;
+        }
+        if(messaggio.payload==REPLY_DATA)
+        {
+            printf("%s\n",messaggio.txt);
+            c++;
+            isAlive[i]=true;
+        }
+        else
+        {
+            printf("%s\n",messaggio.txt);
+            isAlive[i]=false;
+        }
 	}
-	if((comando(msqid))==-1)
-	{
-		fprintf(stderr,"%s: comando\n",program);
-		return -1;
-	}
-	Messaggio messaggio;
-	for(i=1; i<=nDir-1; i++)
-	{
-		messaggio.type=i;
-		messaggio.payload=CMD_EXIT;
-		if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),IPC_NOWAIT))==-1)
-		{
-			fprintf(stderr,"%s: msgsnd\n",program);
-			return -1;
-		}
-	}
-	for(i=1; i<=nDir-1; i++)
-	{
-		printf("ciao quit2\n");
-		wait(NULL);
-	}
-	printf("ciao quit2\n");
+    if(c)
+    {
+        sleep(1);
+        if((comando(msqid,isAlive,nDir))==-1)
+        {
+            fprintf(stderr,"%s: comando\n",program);
+            return -1;
+        }
+        for(i=1; i<=nDir-1; i++)
+        {
+            messaggio.type=i;
+            messaggio.payload=CMD_EXIT;
+            if((msgsnd(msqid,&messaggio,sizeof(messaggio)-sizeof(long),0))==-1)
+            {
+                fprintf(stderr,"%s: msgsnd\n",program);
+                return -1;
+            }
+        }
+        
+        for(i=1; i<=nDir-1; i++)
+        {
+            wait(NULL);
+        }
+    }
+    if(isAlive)
+    {
+        free(isAlive);
+    }
 	msgctl(msqid,IPC_RMID,NULL);
 	return 0;
 }
