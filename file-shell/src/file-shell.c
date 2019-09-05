@@ -134,7 +134,7 @@ int size(int msqid,char*directory,char*file)
 int occurences(char*haystack,char*needle)
 {
 	int occurences=0;
-	while(strstr(haystack,needle))
+	while((haystack=strstr(haystack,needle)))
 	{
 		haystack++;
 		occurences++;
