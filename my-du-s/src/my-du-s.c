@@ -43,7 +43,7 @@ int SIGNAL(int semid,int cond)
 	return semop(semid,operazioni,1);
 }
 
-//Scanner porcesses
+//Scanner processes
 
 int scanner(int shmid,int semid,char*directory,int n)
 {
@@ -211,7 +211,7 @@ int myDuS(int nDirs,char**dirs)
 			a--;
 		}
 	}
-	if(a>=2)
+	if(a>=1)
 	{
 		anyAlive=true;
 	}
