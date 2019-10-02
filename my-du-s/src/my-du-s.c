@@ -167,7 +167,7 @@ void checkDir(bool*isAlive,int nDirs,char**dirs)
 			perror("");
 			isAlive[i]=false;
 		}
-		else if((access(dirs[i],F_OK))==-1)
+		else if((access(dirs[i],R_OK))==-1)
 		{
 			fprintf(stderr,"%s: ",program);
 			perror("");
